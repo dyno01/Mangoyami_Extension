@@ -4,7 +4,7 @@ Source get kaidoSource => _kaidoSource;
 
 Source _kaidoSource = Source(
   name: "Kaido.to",
-  baseUrl: "https://kaido.to",
+  baseUrl: "https://kaido.to/home",
   lang: "en",
   itemType: ItemType.anime,
   typeSource: "zorotheme",
