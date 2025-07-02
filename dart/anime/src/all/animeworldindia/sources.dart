@@ -25,7 +25,7 @@ List<Source> _animeworldindiaSourcesList =
         .map(
           (e) => Source(
             name: 'AnimeWorld India',
-            baseUrl: "https://anime-world.in",
+            baseUrl: "https://watchanimeworld.in",
             lang: e,
             typeSource: "multiple",
             iconUrl: _iconUrl,
