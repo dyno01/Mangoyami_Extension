@@ -5,7 +5,7 @@ Source get aniwatchSource => _aniwatchSource;
 Source _aniwatchSource = Source(
   id: 814067600,
   name: "HiAnime",
-  baseUrl: "https://hianime.to",
+  baseUrl: "https://hianime.pe",
   itemType: ItemType.anime,
   lang: "en",
   typeSource: "zorotheme",
