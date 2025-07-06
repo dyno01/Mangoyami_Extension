@@ -431,7 +431,7 @@ class WatchAnimeWorldClient extends MProvider {
     }
     
     print("Parsed \u001b[32m\u001b[1m\u001b[0m episodes for season $seasonPrefix");
-    // Robust sort: last season last episode to first season first episode
+    // Robust sort: first season first episode to last season last episode
     try {
       chapterList.sort((a, b) {
         double parseSeason(String s) {
@@ -445,15 +445,15 @@ class WatchAnimeWorldClient extends MProvider {
         final aSeason = parseSeason(a.chapterNumber);
         final bSeason = parseSeason(b.chapterNumber);
         if (aSeason != bSeason) {
-          return bSeason.compareTo(aSeason); // Descending by season
+          return aSeason.compareTo(bSeason); // Ascending by season
         }
         final aEp = parseEpisode(a.chapterNumber);
         final bEp = parseEpisode(b.chapterNumber);
         if (aEp != bEp) {
-          return bEp.compareTo(aEp); // Descending by episode
+          return aEp.compareTo(bEp); // Ascending by episode
         }
         // Fallback: compare chapterNumber as string to avoid infinite loop
-        return b.chapterNumber.compareTo(a.chapterNumber);
+        return a.chapterNumber.compareTo(b.chapterNumber);
       });
     } catch (e) {
       print('Error during sorting: $e');
@@ -544,33 +544,33 @@ class WatchAnimeWorldClient extends MProvider {
               final audio = MTrack();
               audio.label = nameMatch.group(1)!;
               audio.file = uriMatch.group(1)!;
-      audios.add(audio);
-    }
-          }
-        }
-                  // Parse video variants
-          for (int i = 0; i < lines.length; i++) {
-            final line = lines[i];
-            if (line.startsWith('#EXT-X-STREAM-INF')) {
-              // Extract resolution
-              final resMatch = RegExp(r'RESOLUTION=(\d+x\d+)').firstMatch(line);
-              final quality = resMatch != null ? resMatch.group(1) : 'Auto';
-              
-              // Next line should be the URL
-              if (i + 1 < lines.length && !lines[i + 1].startsWith('#')) {
-                final url = lines[i + 1].trim();
-                final fullUrl = url.startsWith('http') ? url : masterUrl.replaceFirst(RegExp(r'/[^/]+$'), '/') + url;
-                final video = MVideo(
-                  fullUrl,
-                  'Pixfusion $quality',
-                  fullUrl,
-                  headers: headers,
-                );
-                video.audios = audios; // Attach all audios
-      videos.add(video);
-              }
+              audios.add(audio);
             }
           }
+        }
+        final reversedAudios = audios.reversed.toList();
+        // Parse video variants
+        for (int i = 0; i < lines.length; i++) {
+          final line = lines[i];
+          if (line.startsWith('#EXT-X-STREAM-INF')) {
+            // Extract resolution
+            final resMatch = RegExp(r'RESOLUTION=(\d+x\d+)').firstMatch(line);
+            final quality = resMatch != null ? resMatch.group(1) : 'Auto';
+            // Next line should be the URL
+            if (i + 1 < lines.length && !lines[i + 1].startsWith('#')) {
+              final url = lines[i + 1].trim();
+              final fullUrl = url.startsWith('http') ? url : masterUrl.replaceFirst(RegExp(r'/[^/]+$'), '/') + url;
+              final video = MVideo(
+                fullUrl,
+                'Pixfusion $quality',
+                fullUrl,
+                headers: headers,
+              );
+              video.audios = reversedAudios; // Attach audios in reverse order (Hindi to Japanese)
+              videos.add(video);
+            }
+          }
+        }
       }
     } finally {
       client.close();
