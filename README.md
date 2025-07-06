@@ -12,7 +12,7 @@ https://MiraiEnoki.github.io/anymex-extensions/index.json
 
 anime repo 
 ```
-https://MiraiEnoki.github.io/anymex-extensions/anime_index.json
+https://raw.githubusercontent.com/dyno01/dartotsu-extension/refs/heads/main/anime_index.json
 ```
 
 novel repo 
