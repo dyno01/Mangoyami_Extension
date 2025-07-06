@@ -1,5 +1,6 @@
 import 'package:mangayomi/bridge_lib.dart';
 import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 class WatchAnimeWorldClient extends MProvider {
   WatchAnimeWorldClient({required this.source});
@@ -286,7 +287,7 @@ class WatchAnimeWorldClient extends MProvider {
 
           if (response.statusCode == 200 && response.body.trim() != '0') {
             final seasonChapters = _parseChaptersFromHTML(response.body, seasonName);
-            print("Found [32m[1m${seasonChapters.length}[0m episodes for Season $seasonName (AJAX)");
+            print("Found \u001b[32m[1m${seasonChapters.length}[0m episodes for Season $seasonName (AJAX)");
             chapterList.addAll(seasonChapters);
           } else {
             print("No episodes found for Season $seasonName (AJAX response empty or invalid)");
@@ -343,8 +344,9 @@ class WatchAnimeWorldClient extends MProvider {
     // Each episode is a <li>...</li>
     final episodes = RegExp(r'<li[^>]*>(.*?)</li>', dotAll: true).allMatches(containerHtml);
     
-    print("Found ${episodes.length} episode elements for season $seasonPrefix");
+    print("Found \u001b[32m${episodes.length}[0m episode elements for season $seasonPrefix");
     
+    int episodeIndex = 1; // Start episode numbering from 1 for each season
     for (final episode in episodes) {
       final episodeHtml = episode.group(1) ?? "";
       if (episodeHtml.isEmpty) continue;
@@ -370,7 +372,7 @@ class WatchAnimeWorldClient extends MProvider {
       
       if (link.isEmpty) continue;
 
-      // Extract episode number
+      // Extract episode number (keep for chapterNumber)
       String episodeNum = "0";
       final numMatch = RegExp(
         r'<span[^>]*class="num-epi"[^>]*>(.*?)</span>', 
@@ -379,7 +381,7 @@ class WatchAnimeWorldClient extends MProvider {
       
       if (numMatch != null && numMatch.group(1) != null) {
         episodeNum = _cleanText(numMatch.group(1)!).replaceAll("x", ".");
-      } else {
+        } else {
         // Try to extract number from link or title
         final urlNumMatch = RegExp(r'episode-(\d+)').firstMatch(link);
         if (urlNumMatch != null) {
@@ -408,15 +410,15 @@ class WatchAnimeWorldClient extends MProvider {
         }
       }
 
-      // Format title with season info if available
+      // Format title with season info if available, using incremental episode number
       String finalTitle = title;
       String chapterNumber = episodeNum;
       
       if (seasonPrefix != null && seasonPrefix.isNotEmpty) {
-        finalTitle = "S$seasonPrefix E$episodeNum - $title";
+        finalTitle = "S$seasonPrefix E$episodeIndex - $title";
         chapterNumber = "$seasonPrefix.$episodeNum";
       } else {
-        finalTitle = "Episode $episodeNum - $title";
+        finalTitle = "Episode $episodeIndex - $title";
       }
 
       chapterList.add(MChapter(
@@ -425,9 +427,37 @@ class WatchAnimeWorldClient extends MProvider {
         dateUpload: DateTime.now().millisecondsSinceEpoch.toString(),
         chapterNumber: chapterNumber,
       ));
+      episodeIndex++;
     }
     
-    print("Parsed ${chapterList.length} episodes for season $seasonPrefix");
+    print("Parsed \u001b[32m\u001b[1m\u001b[0m episodes for season $seasonPrefix");
+    // Robust sort: last season last episode to first season first episode
+    try {
+      chapterList.sort((a, b) {
+        double parseSeason(String s) {
+          final parts = s.split('.');
+          return parts.isNotEmpty ? double.tryParse(parts[0]) ?? 0 : 0;
+        }
+        double parseEpisode(String s) {
+          final parts = s.split('.');
+          return parts.length > 1 ? double.tryParse(parts[1]) ?? 0 : 0;
+        }
+        final aSeason = parseSeason(a.chapterNumber);
+        final bSeason = parseSeason(b.chapterNumber);
+        if (aSeason != bSeason) {
+          return bSeason.compareTo(aSeason); // Descending by season
+        }
+        final aEp = parseEpisode(a.chapterNumber);
+        final bEp = parseEpisode(b.chapterNumber);
+        if (aEp != bEp) {
+          return bEp.compareTo(aEp); // Descending by episode
+        }
+        // Fallback: compare chapterNumber as string to avoid infinite loop
+        return b.chapterNumber.compareTo(a.chapterNumber);
+      });
+    } catch (e) {
+      print('Error during sorting: $e');
+    }
     return chapterList;
   }
 
@@ -514,33 +544,33 @@ class WatchAnimeWorldClient extends MProvider {
               final audio = MTrack();
               audio.label = nameMatch.group(1)!;
               audio.file = uriMatch.group(1)!;
-              audios.add(audio);
-            }
+      audios.add(audio);
+    }
           }
         }
-        // Parse video variants
-        String? quality;
-        for (int i = 0; i < lines.length; i++) {
-          final line = lines[i];
-          if (line.startsWith('#EXT-X-STREAM-INF')) {
-            // Extract resolution
-            final resMatch = RegExp(r'RESOLUTION=(\d+x\d+)').firstMatch(line);
-            quality = resMatch != null ? resMatch.group(1) : null;
-            // Next line should be the URL
-            if (i + 1 < lines.length && !lines[i + 1].startsWith('#')) {
-              final url = lines[i + 1].trim();
-              final fullUrl = url.startsWith('http') ? url : masterUrl.replaceFirst(RegExp(r'/[^/]+$'), '/') + url;
-              final video = MVideo(
-                fullUrl,
-                'Pixfusion ${quality ?? "Auto"}',
-                fullUrl,
-                headers: headers,
-              );
-              video.audios = audios;
-              videos.add(video);
+                  // Parse video variants
+          for (int i = 0; i < lines.length; i++) {
+            final line = lines[i];
+            if (line.startsWith('#EXT-X-STREAM-INF')) {
+              // Extract resolution
+              final resMatch = RegExp(r'RESOLUTION=(\d+x\d+)').firstMatch(line);
+              final quality = resMatch != null ? resMatch.group(1) : 'Auto';
+              
+              // Next line should be the URL
+              if (i + 1 < lines.length && !lines[i + 1].startsWith('#')) {
+                final url = lines[i + 1].trim();
+                final fullUrl = url.startsWith('http') ? url : masterUrl.replaceFirst(RegExp(r'/[^/]+$'), '/') + url;
+                final video = MVideo(
+                  fullUrl,
+                  'Pixfusion $quality',
+                  fullUrl,
+                  headers: headers,
+                );
+                video.audios = audios; // Attach all audios
+      videos.add(video);
+              }
             }
           }
-        }
       }
     } finally {
       client.close();
@@ -675,15 +705,15 @@ class WatchAnimeWorldClient extends MProvider {
 
           // --- ADDED DEBUG PRINTS ---
           print('Raw player response body: ${playerRes.body}');
-          try {
-            final json = jsonDecode(playerRes.body);
-            print('Parsed Pixfusion JSON: $json');
-            print('JSON keys: \\${json.keys}');
-            final String? securedLink = json['securedLink'];
-            final String? videoSource = json['videoSource'];
+                     try {
+             final playerData = jsonDecode(playerRes.body);
+             print('Parsed Pixfusion JSON: $playerData');
+             print('JSON keys: ${playerData.keys}');
+             final String? securedLink = playerData['securedLink'];
+             final String? videoSource = playerData['videoSource'];
             print('Extracted securedLink: $securedLink');
             print('Extracted videoSource: $videoSource');
-            if (securedLink != null && securedLink.isNotEmpty && securedLink.endsWith('.m3u8')) {
+                         if (securedLink != null && securedLink.isNotEmpty && securedLink.contains('.m3u8')) {
               final qualities = await _extractQualitiesAndAudiosFromM3U8(securedLink, {
                 'Referer': playerUrl,
                 'User-Agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36',
@@ -701,7 +731,7 @@ class WatchAnimeWorldClient extends MProvider {
                   },
                 ));
               }
-            } else if (videoSource != null && videoSource.isNotEmpty && videoSource.endsWith('.m3u8')) {
+                         } else if (videoSource != null && videoSource.isNotEmpty && videoSource.contains('.m3u8')) {
               final qualities = await _extractQualitiesAndAudiosFromM3U8(videoSource, {
                 'Referer': playerUrl,
                 'User-Agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36',
@@ -783,6 +813,23 @@ class WatchAnimeWorldClient extends MProvider {
     }
   }
 }
+
+
+// At the end of the file, export both sources
+final sources = [
+  MSource(
+    id: 1,
+    name: "WatchAnimeWorld (Hindi)",
+    lang: "hi",
+    baseUrl: "https://watchanimeworld.in",
+  ),
+  MSource(
+    id: 2,
+    name: "WatchAnimeWorld (Japanese)",
+    lang: "ja",
+    baseUrl: "https://watchanimeworld.in",
+  ),
+];
 
 WatchAnimeWorldClient main(MSource source) {
   return WatchAnimeWorldClient(source: source);
