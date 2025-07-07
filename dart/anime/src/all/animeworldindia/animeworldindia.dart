@@ -129,7 +129,82 @@ class WatchAnimeWorldClient extends MProvider {
     try {
       final encodedQuery = Uri.encodeComponent(query);
       final res = await _safeGet("$baseUrl/search/$encodedQuery/page/$page/");
-      return _parseAnimeList(res.body);
+      final body = res.body;
+      final mangaList = <MManga>[];
+      final items = RegExp(
+        r'<li[^>]*class="[^"]*(series|movies)[^"]*"[^>]*>(.*?)</li>',
+        dotAll: true,
+      ).allMatches(body);
+      for (final item in items) {
+        final itemHtml = item.group(0) ?? "";
+        if (itemHtml.isEmpty) continue;
+        String title = "Unknown";
+        final titleMatch = RegExp(r'<h2[^>]*class="entry-title"[^>]*>(.*?)</h2>').firstMatch(itemHtml);
+        if (titleMatch != null) {
+          title = _cleanText(titleMatch.group(1) ?? "Unknown", 80);
+        }
+        String link = "";
+        final linkMatch = RegExp(r'<a[^>]*href="([^"]+)"[^>]*class="lnk-blk"').firstMatch(itemHtml);
+        if (linkMatch != null && linkMatch.group(1) != null) {
+          link = linkMatch.group(1)!;
+        } else {
+          continue;
+        }
+        String imageUrl = "";
+        final imageMatch = RegExp(r'<img[^>]*src="([^"]+)"').firstMatch(itemHtml);
+        if (imageMatch != null && imageMatch.group(1) != null) {
+          imageUrl = imageMatch.group(1)!;
+          if (!imageUrl.startsWith("http")) {
+            imageUrl = _buildUrl(imageUrl);
+          }
+        }
+        if (imageUrl.isEmpty) {
+          imageUrl = "https://placehold.co/200x300/000000/FFFFFF?text=No+Image";
+        }
+        mangaList.add(MManga(
+          name: title,
+          link: link,
+          imageUrl: imageUrl,
+        ));
+      }
+      // Fallback: If no results, try direct /series/ and /category/franchise/ URLs
+      if (mangaList.isEmpty && page == 1) {
+        final fallbackSlugs = [query.toLowerCase().replaceAll(" ", "-"), query.toLowerCase().replaceAll(" ", "")];
+        for (final slug in fallbackSlugs) {
+          final directUrls = [
+            "$baseUrl/series/$slug/",
+            "$baseUrl/category/franchise/$slug/"
+          ];
+          for (final url in directUrls) {
+            try {
+              final detailRes = await _safeGet(url);
+              if (detailRes.statusCode == 200) {
+                // Try to extract title and image
+                String title = slug;
+                final titleMatch = RegExp(r'<h1[^>]*>(.*?)</h1>').firstMatch(detailRes.body);
+                if (titleMatch != null && titleMatch.group(1) != null) {
+                  title = _cleanText(titleMatch.group(1)!, 80);
+                }
+                String imageUrl = "https://placehold.co/200x300/000000/FFFFFF?text=No+Image";
+                final imageMatch = RegExp(r'<img[^>]*src="([^"]+)"').firstMatch(detailRes.body);
+                if (imageMatch != null && imageMatch.group(1) != null) {
+                  imageUrl = imageMatch.group(1)!;
+                  if (!imageUrl.startsWith("http")) {
+                    imageUrl = _buildUrl(imageUrl);
+                  }
+                }
+                mangaList.add(MManga(
+                  name: title,
+                  link: url,
+                  imageUrl: imageUrl,
+                ));
+                break;
+              }
+            } catch (_) {}
+          }
+        }
+      }
+      return MPages(mangaList, mangaList.isNotEmpty);
     } catch (e) {
       return MPages([], false);
     }
@@ -141,22 +216,34 @@ class WatchAnimeWorldClient extends MProvider {
       final res = await _safeGet(url);
       final body = res.body;
       
+      // Detect page type
+      final isSeriesPage = url.contains('/series/');
+      final isFranchisePage = url.contains('/category/franchise/');
+
       // Title extraction
       String title = "Unknown";
-      final titleMatch = RegExp(r'<h1[^>]*class="entry-title"[^>]*>(.*?)</h1>').firstMatch(body);
+      RegExp? titleReg;
+      if (isSeriesPage) {
+        titleReg = RegExp(r'<h1[^>]*class="entry-title"[^>]*>(.*?)</h1>');
+      } else if (isFranchisePage) {
+        titleReg = RegExp(r'<h1[^>]*>(.*?)</h1>');
+      }
+      final titleMatch = titleReg?.firstMatch(body);
       if (titleMatch != null && titleMatch.group(1) != null) {
         title = _cleanText(titleMatch.group(1)!, 100);
       }
 
-      // Image extraction - precise targeting from new structure
+      // Image extraction
       String imageUrl = "https://placehold.co/200x300/000000/FFFFFF?text=No+Image";
-      final imageMatch = RegExp(
-        r'<img[^>]*style="[^"]*height: 14rem;[^"]*"[^>]*src="([^"]+)"'
-      ).firstMatch(body);
-      
+      RegExp? imageReg;
+      if (isSeriesPage) {
+        imageReg = RegExp(r'<img[^>]*style="[^"]*height: 14rem;[^"]*"[^>]*src="([^"]+)"');
+      } else if (isFranchisePage) {
+        imageReg = RegExp(r'<img[^>]*src="([^"]+)"[^>]*class="[^"]*cover[^"]*"');
+      }
+      final imageMatch = imageReg?.firstMatch(body);
       if (imageMatch != null && imageMatch.group(1) != null) {
         imageUrl = imageMatch.group(1)!;
-        // Fix potential malformed URL
         if (imageUrl.startsWith("Limage.")) {
           imageUrl = "https://image." + imageUrl.substring(7);
         }
@@ -165,18 +252,20 @@ class WatchAnimeWorldClient extends MProvider {
         }
       }
 
-      // Description extraction - precise targeting
+      // Description extraction
       String description = "No description available";
-      final descMatch = RegExp(
-        r'<div[^>]*class="description"[^>]*>(.*?)</div>',
-        dotAll: true
-      ).firstMatch(body);
-      
+      RegExp? descReg;
+      if (isSeriesPage) {
+        descReg = RegExp(r'<div[^>]*class="description"[^>]*>(.*?)</div>', dotAll: true);
+      } else if (isFranchisePage) {
+        descReg = RegExp(r'<div[^>]*class="synopsis"[^>]*>(.*?)</div>', dotAll: true);
+      }
+      final descMatch = descReg?.firstMatch(body);
       if (descMatch != null && descMatch.group(1) != null) {
         description = _cleanText(descMatch.group(1)!, 500);
       }
 
-      // Status detection - more robust approach
+      // Status detection
       MStatus status = MStatus.unknown;
       if (body.contains("Status:") || body.contains("status:")) {
         final statusMatch = RegExp(
@@ -184,7 +273,6 @@ class WatchAnimeWorldClient extends MProvider {
           caseSensitive: false,
           dotAll: true
         ).firstMatch(body);
-        
         if (statusMatch != null && statusMatch.group(1) != null) {
           final statusText = statusMatch.group(1)!.toLowerCase();
           if (statusText.contains("ongoing")) {
@@ -195,13 +283,15 @@ class WatchAnimeWorldClient extends MProvider {
         }
       }
 
-      // Genre extraction - precise targeting
+      // Genre extraction
       final genres = <String>[];
-      final genreMatch = RegExp(
-        r'<p[^>]*class="genres"[^>]*>(.*?)</p>',
-        dotAll: true
-      ).firstMatch(body);
-      
+      RegExp? genreReg;
+      if (isSeriesPage) {
+        genreReg = RegExp(r'<p[^>]*class="genres"[^>]*>(.*?)</p>', dotAll: true);
+      } else if (isFranchisePage) {
+        genreReg = RegExp(r'<div[^>]*class="genres"[^>]*>(.*?)</div>', dotAll: true);
+      }
+      final genreMatch = genreReg?.firstMatch(body);
       if (genreMatch != null && genreMatch.group(1) != null) {
         final genreHtml = genreMatch.group(1)!;
         final genreLinks = RegExp(r'<a[^>]*>(.*?)</a>').allMatches(genreHtml);
@@ -215,7 +305,7 @@ class WatchAnimeWorldClient extends MProvider {
         }
       }
 
-      // Get chapters
+      // Get chapters (episodes)
       final chapters = await getChapters(url);
 
       return MManga(
@@ -223,7 +313,7 @@ class WatchAnimeWorldClient extends MProvider {
         link: url,
         imageUrl: imageUrl,
         description: description,
-        author: "Unknown", // Not available in structure
+        author: "Unknown",
         status: status,
         genre: genres,
         chapters: chapters,
@@ -299,8 +389,9 @@ class WatchAnimeWorldClient extends MProvider {
         }
       }
 
-      print("Total episodes found: ${chapterList.length}");
-      return chapterList;
+      print("Total episodes found: [32m${chapterList.length}");
+      // Force reverse order before returning
+      return chapterList.reversed.toList();
     } catch (e) {
       print("Error in getChapters: $e");
       return <MChapter>[];
@@ -431,7 +522,7 @@ class WatchAnimeWorldClient extends MProvider {
     }
     
     print("Parsed \u001b[32m\u001b[1m\u001b[0m episodes for season $seasonPrefix");
-    // Robust sort: first season first episode to last season last episode
+    // Robust sort: last season last episode to first season first episode (reverse chronological)
     try {
       chapterList.sort((a, b) {
         double parseSeason(String s) {
@@ -445,15 +536,15 @@ class WatchAnimeWorldClient extends MProvider {
         final aSeason = parseSeason(a.chapterNumber);
         final bSeason = parseSeason(b.chapterNumber);
         if (aSeason != bSeason) {
-          return aSeason.compareTo(bSeason); // Ascending by season
+          return bSeason.compareTo(aSeason); // Descending by season (last season first)
         }
         final aEp = parseEpisode(a.chapterNumber);
         final bEp = parseEpisode(b.chapterNumber);
         if (aEp != bEp) {
-          return aEp.compareTo(bEp); // Ascending by episode
+          return bEp.compareTo(aEp); // Descending by episode (last episode first)
         }
         // Fallback: compare chapterNumber as string to avoid infinite loop
-        return a.chapterNumber.compareTo(b.chapterNumber);
+        return b.chapterNumber.compareTo(a.chapterNumber);
       });
     } catch (e) {
       print('Error during sorting: $e');
@@ -554,8 +645,11 @@ class WatchAnimeWorldClient extends MProvider {
           final line = lines[i];
           if (line.startsWith('#EXT-X-STREAM-INF')) {
             // Extract resolution
-            final resMatch = RegExp(r'RESOLUTION=(\d+x\d+)').firstMatch(line);
-            final quality = resMatch != null ? resMatch.group(1) : 'Auto';
+            final resMatch = RegExp(r'RESOLUTION=(\d+)x(\d+)').firstMatch(line);
+            String quality = 'Auto';
+            if (resMatch != null) {
+              quality = '${resMatch.group(2)}p'; // Use height for label
+            }
             // Next line should be the URL
             if (i + 1 < lines.length && !lines[i + 1].startsWith('#')) {
               final url = lines[i + 1].trim();
@@ -799,6 +893,7 @@ class WatchAnimeWorldClient extends MProvider {
       for (int i = 0; i < videoList.length; i++) {
         print('Video $i: url=${videoList[i].url}, quality=${videoList[i].quality}');
       }
+
       return videoList;
     } catch (e) {
       print('Error in getVideoList: $e');
