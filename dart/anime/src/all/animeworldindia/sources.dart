@@ -2,7 +2,7 @@ import '../../../../../model/source.dart';
 
 const _animeworldindiaVersion = "0.0.40";
 const _animeworldindiaSourceCodeUrl =
-    "https://raw.githubusercontent.com/kodjodevf/mangayomi-extensions/$branchName/dart/anime/src/all/animeworldindia/animeworldindia.dart";
+    "https://raw.githubusercontent.com/dyno01/Mangoyami_Extension/refs/heads/main/dart/anime/src/all/animeworldindia/animeworldindia.dart";
 
 String _iconUrl =
     "https://raw.githubusercontent.com/kodjodevf/mangayomi-extensions/$branchName/dart/anime/src/all/animeworldindia/icon.png";
